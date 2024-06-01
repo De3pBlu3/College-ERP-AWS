@@ -9,26 +9,76 @@ https://docs.djangoproject.com/en/2.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/2.1/ref/settings/
 """
-
+import base64
 import os
+from dotenv import load_dotenv
+import boto3
+import json
+
+load_dotenv()
+
+session = boto3.Session(
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    aws_session_token=os.getenv("AWS_SESSION_TOKEN")
+)
+
+
+def get_secret(secret_name):
+    region_name = os.getenv("AWS_REGION")
+    # Create a Secrets Manager client
+    client = boto3.client('secretsmanager', region_name=region_name)
+
+    try:
+        # Retrieve the secret
+        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+    except client.exceptions.ResourceNotFoundException:
+        print(f"The requested secret {secret_name} was not found")
+        return None
+    except client.exceptions.InvalidRequestException as e:
+        print(f"The request was invalid due to: {e}")
+        return None
+    except client.exceptions.InvalidParameterException as e:
+        print(f"The request had invalid params: {e}")
+        return None
+    except client.exceptions.DecryptionFailure as e:
+        print(f"The requested secret can't be decrypted using the provided KMS key: {e}")
+        return None
+    except client.exceptions.InternalServiceError as e:
+        print(f"An error occurred on the server side: {e}")
+        return None
+
+    # Decrypts secret using the associated KMS key.
+    if 'SecretString' in get_secret_value_response:
+        secret = get_secret_value_response['SecretString']
+    else:
+        secret = base64.b64decode(get_secret_value_response['SecretBinary'])
+
+    # Convert the secret from JSON format to a Python dictionary
+    secret_dict = json.loads(secret)
+
+    return secret_dict
+
+# test boto
+
+
+
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/2.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'jy8c-n9y=pf##!2^jae-l_5iafq6q%wfq8gdb6c0r5d52su+9y'
+SECRET_KEY = os.environ.get("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = bool(os.environ.get("DEBUG", default=0))
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS").split(" ")
 
 AUTH_USER_MODEL = 'info.User'
-
 
 # Application definition
 
@@ -43,8 +93,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'djoser',
     'rest_framework.authtoken',
-    'apis',
-
+    'apis'
 ]
 
 MIDDLEWARE = [
@@ -77,17 +126,22 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'CollegeERP.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/2.1/ref/settings/#databases
 
+
+RDS_AUTH = get_secret(os.getenv("AWS_AUTH_SECRET"))
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'postgres',
+        'USER': RDS_AUTH['username'],
+        'PASSWORD': RDS_AUTH['password'],
+        'HOST': os.getenv("AWS_DB_ENDPOINT"),
+        'PORT': '5432',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/2.1/ref/settings/#auth-password-validators
@@ -107,7 +161,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/2.1/topics/i18n/
 
@@ -120,7 +173,6 @@ USE_I18N = True
 USE_L10N = True
 
 USE_TZ = True
-
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/2.1/howto/static-files/
@@ -138,3 +190,5 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ),
 }
+
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'  # added
